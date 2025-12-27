@@ -17,38 +17,10 @@ use std::thread::JoinHandle;
 const EXITCODE_SUCCESS: i32 = 0;
 const EXITCODE_CPU_LOAD_FAILS: i32 = 2;
 
-#[derive(Default)]
-struct RenderOptions {
-    pub linear_interpolation: bool,
-}
-
 enum GBEvent {
     KeyUp(rboy::KeypadKey),
     KeyDown(rboy::KeypadKey),
-    SpeedUp,
-    SpeedDown,
 }
-
-#[derive(Debug)]
-struct ArgParseError {
-    message: String,
-}
-
-impl ArgParseError {
-    fn new<T: Into<String>>(message: T) -> Self {
-        ArgParseError {
-            message: message.into(),
-        }
-    }
-}
-
-impl std::fmt::Display for ArgParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for ArgParseError {}
 
 fn main() {
     let exit_status = real_main();
@@ -267,7 +239,7 @@ fn real_main() -> i32 {
             break;
         }
 
-        if let Some((event, key)) = keyboard_event_receiver.try_recv() {
+        if let Ok((event, key)) = keyboard_event_receiver.try_recv() {
             match event {
                 KeyEvent::Down => {
                     let _ = gb_event_sender.send(GBEvent::KeyDown(key));
@@ -330,7 +302,6 @@ fn construct_cpu(
 
 fn run_cpu(mut cpu: Box<Device>, sender: SyncSender<Vec<u8>>, receiver: Receiver<GBEvent>) {
     let periodic = timer_periodic(16);
-    let mut limit_speed = true;
 
     let waitticks = (4194304f64 / 1000.0 * 16.0).round() as u32;
     let mut ticks = 0;
@@ -353,20 +324,13 @@ fn run_cpu(mut cpu: Box<Device>, sender: SyncSender<Vec<u8>>, receiver: Receiver
                 Ok(event) => match event {
                     GBEvent::KeyUp(key) => cpu.keyup(key),
                     GBEvent::KeyDown(key) => cpu.keydown(key),
-                    GBEvent::SpeedUp => limit_speed = false,
-                    GBEvent::SpeedDown => {
-                        limit_speed = true;
-                        cpu.sync_audio();
-                    }
                 },
                 Err(TryRecvError::Empty) => break 'recv,
                 Err(TryRecvError::Disconnected) => break 'outer,
             }
         }
 
-        if limit_speed {
-            let _ = periodic.recv();
-        }
+        let _ = periodic.recv();
     }
 }
 

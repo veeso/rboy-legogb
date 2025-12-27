@@ -13,12 +13,10 @@ pub struct FramebufferConfig {
 
 /// Represents a memory-mapped framebuffer.
 pub struct Framebuffer {
-    width: usize,
     height: usize,
     ptr: *mut u16,
     /// The number of pixels in a single row of the framebuffer.
     stride: usize,
-    bytes_per_pixel: usize,
     scale: usize,
 }
 
@@ -41,7 +39,7 @@ impl Framebuffer {
                 size,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_SHARED,
-                file.as_raw_fd(),
+                fd,
                 0,
             )
         } as *mut u16;
@@ -51,11 +49,9 @@ impl Framebuffer {
         }
         Ok(Framebuffer {
             scale: config.scale,
-            width,
-            height,
+            height: config.height,
             ptr,
-            stride,
-            bytes_per_pixel,
+            stride: config.stride_pixels,
         })
     }
 }
@@ -92,10 +88,10 @@ impl Write for Framebuffer {
                     let row0 = self.ptr.add(dst_y0 * self.stride);
                     let row1 = self.ptr.add(dst_y1 * self.stride);
 
-                    row0[dx0] = rgb565;
-                    row0[dx1] = rgb565;
-                    row1[dx0] = rgb565;
-                    row1[dx1] = rgb565;
+                    *row0.wrapping_add(dx0) = rgb565;
+                    *row0.wrapping_add(dx1) = rgb565;
+                    *row1.wrapping_add(dx0) = rgb565;
+                    *row1.wrapping_add(dx1) = rgb565;
                 }
             }
         }

@@ -92,6 +92,8 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
+    use crate::KeypadKey;
+
     use super::*;
 
     #[test]
@@ -104,13 +106,13 @@ mod tests {
 
         assert_eq!(config.keys.len(), 2);
         assert_eq!(config.keys[0].gpio, 17);
-        assert_eq!(config.keys[0].keycode.keycode(), evdev::KeyCode::KEY_A);
+        assert_eq!(config.keys[0].keycode.keycode(), KeypadKey::A);
         assert_eq!(config.keys[0].active_low, Some(true));
         assert_eq!(config.keys[0].debounce_ms, Some(20));
         assert_eq!(config.keys[0].repeat, false);
 
         assert_eq!(config.keys[1].gpio, 22);
-        assert_eq!(config.keys[1].keycode.keycode(), evdev::KeyCode::KEY_UP);
+        assert_eq!(config.keys[1].keycode.keycode(), KeypadKey::Up);
         assert_eq!(config.keys[1].repeat, true);
         assert_eq!(config.keys[1].repeat_delay_ms, Some(300));
         assert_eq!(config.keys[1].repeat_rate_ms, Some(80));

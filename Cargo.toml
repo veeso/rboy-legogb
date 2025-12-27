@@ -1,7 +1,7 @@
 [package]
 name = "rboy"
 version = "0.2.0"
-authors = [ "mvdnes <git@mathijs.vd-nes.nl>" ]
+authors = ["mvdnes <git@mathijs.vd-nes.nl>"]
 edition = "2018"
 
 [dependencies]
@@ -24,13 +24,14 @@ toml = "0.5"
 tempfile = "3"
 
 [features]
-gui = [ "clap", "cpal", "libc", "mmap" ]
+default = ["gui"]
+gui = ["clap", "cpal", "libc", "mmap"]
 
 [[bin]]
 name = "rboy"
 test = false
 doc = false
-required-features = [ "gui" ]
+required-features = ["gui"]
 
 [profile.release]
 lto = true

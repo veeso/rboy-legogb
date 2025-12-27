@@ -35,7 +35,7 @@ where
     poll_interval: Duration,
 }
 
-impl<K, G> InputListener<G>
+impl<G> InputListener<G>
 where
     G: Gpio,
 {
@@ -106,17 +106,12 @@ where
         if value == GpioValue::Enabled {
             warn!("Power switch activated, shutting down system");
             #[cfg(target_os = "linux")]
-            unsafe {
-                if libc::reboot(libc::LINUX_REBOOT_CMD_POWER_OFF) != 0 {
-                    error!(
-                        "Failed to shut down system: {}",
-                        std::io::Error::last_os_error()
-                    );
-                } else {
-                    info!("System shutdown initiated");
-                    // set exit
-                    exit.store(true, std::sync::atomic::Ordering::SeqCst);
+            {
+                use std::process::Command;
+                if let Err(e) = Command::new("shutdown").arg("-h").arg("now").spawn() {
+                    error!("Failed to execute shutdown command: {}", e);
                 }
+                exit.store(true, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }
