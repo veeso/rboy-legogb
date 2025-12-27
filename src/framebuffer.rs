@@ -96,9 +96,9 @@ impl Framebuffer {
 
     /// Fills the entire framebuffer with zeros.
     pub fn zero(&self) {
-        let size = self.stride * self.height * 2;
+        let pixels = self.stride * self.height;
         unsafe {
-            std::ptr::write_bytes(self.ptr, 0, size);
+            std::ptr::write_bytes(self.ptr, 0, pixels);
         }
     }
 }
