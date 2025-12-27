@@ -43,10 +43,15 @@ enum AppState {
 fn main() -> anyhow::Result<()> {
     let args: args::Args = argh::from_env();
 
+    init_app_log(args.log_level)?;
+    info!("rboy-lego starting...");
+
     // read config
     let config = Rc::new(AppConfig::load_from_file(&args.config)?);
+    log_config(&config);
 
     // open framebuffer
+    debug!("Opening framebuffer...");
     let framebuffer = Rc::new(Framebuffer::new(FramebufferConfig {
         path: args.framebuffer_path,
         width: args.width,
@@ -55,6 +60,7 @@ fn main() -> anyhow::Result<()> {
         stride_pixels: args.stride_pixels,
         scale: args.scale,
     })?);
+    info!("Framebuffer opened.");
 
     // init state
     let mut app_state = match &args.rom_path {
@@ -66,6 +72,7 @@ fn main() -> anyhow::Result<()> {
             config: config.clone(),
         },
     };
+    debug!("Initial AppState: {app_state:?}",);
 
     // setup control c handler
     let exit = Arc::new(AtomicBool::new(false));
@@ -87,6 +94,7 @@ fn main() -> anyhow::Result<()> {
             AppState::Menu { config } => run_menu(config, exit.clone())?,
             AppState::Exit => break,
         };
+        debug!("New AppState: {app_state:?}",);
     }
 
     Ok(())
@@ -106,6 +114,8 @@ fn run_menu(config: Rc<AppConfig>, exit: Arc<AtomicBool>) -> anyhow::Result<AppS
     input_listener_exit.store(true, std::sync::atomic::Ordering::SeqCst);
     let _ = input_listener_thread.join();
 
+    debug!("Menu exited with result: {:?}", res);
+
     res
 }
 
@@ -115,21 +125,26 @@ fn run_emulator(
     framebuffer: Rc<Framebuffer>,
     exit: Arc<AtomicBool>,
 ) -> anyhow::Result<AppState> {
+    info!("Starting emulator with ROM: {}", rom_file.display());
     // zero framebuffer
     framebuffer.zero();
+    debug!("Framebuffer zeroed.");
 
     let cpu = construct_cpu(rom_file, false, false, None);
 
     let Some(mut cpu) = cpu else {
         return Err(anyhow::anyhow!("Could not construct CPU"));
     };
+    debug!("CPU constructed");
 
     let cpal_audio_stream;
 
     let player = CpalPlayer::get();
+    debug!("Audio player initialized: {}", player.is_some());
     match player {
         Some((v, s)) => {
             cpu.enable_audio(Box::new(v) as Box<dyn rboy::AudioPlayer>, false);
+            debug!("Audio enabled on CPU");
             cpal_audio_stream = Some(s);
         }
         None => {
@@ -139,23 +154,29 @@ fn run_emulator(
     let (gb_event_sender, gb_event_receiver) = mpsc::channel();
     let (video_sender, video_receiver) = mpsc::sync_channel(1);
 
+    debug!("Starting CPU thread");
     let cpu_thread = thread::spawn(move || run_cpu(cpu, video_sender, gb_event_receiver));
+    debug!("CPU thread started");
 
     // run input listener
     let (keyboard_event_sender, keyboard_event_receiver) = mpsc::channel();
     let input_listener_thread = run_input_listener(&config, exit.clone(), keyboard_event_sender);
+    debug!("Input listener started");
 
     loop {
         if exit.load(std::sync::atomic::Ordering::SeqCst) {
+            info!("Exit requested, stopping emulator...");
             break;
         }
 
         if let Ok((event, key)) = keyboard_event_receiver.try_recv() {
             match event {
                 KeyEvent::Down => {
+                    debug!("Key Down: {:?}", key);
                     let _ = gb_event_sender.send(GBEvent::KeyDown(key));
                 }
                 KeyEvent::Up => {
+                    debug!("Key Up: {:?}", key);
                     let _ = gb_event_sender.send(GBEvent::KeyUp(key));
                 }
             }
@@ -163,6 +184,7 @@ fn run_emulator(
 
         match video_receiver.try_recv() {
             Ok(data) => {
+                debug!("Received video frame, updating framebuffer");
                 framebuffer.write(&data);
             }
             Err(TryRecvError::Empty) => {
@@ -172,7 +194,9 @@ fn run_emulator(
         }
     }
 
+    debug!("Stopping input listener...");
     let _ = input_listener_thread.join();
+    debug!("Input listener stopped.");
 
     drop(cpal_audio_stream);
     drop(video_receiver); // Stop CPU thread by disconnecting
@@ -180,16 +204,13 @@ fn run_emulator(
 
     // zero framebuffer
     framebuffer.zero();
+    debug!("Framebuffer zeroed.");
 
     if exit.load(std::sync::atomic::Ordering::SeqCst) {
         Ok(AppState::Exit)
     } else {
         Ok(AppState::Menu { config })
     }
-}
-
-fn warn(message: &str) {
-    eprintln!("{}", message);
 }
 
 fn construct_cpu(
@@ -205,7 +226,7 @@ fn construct_cpu(
     let c = match opt_c {
         Ok(cpu) => cpu,
         Err(message) => {
-            warn(message);
+            warn!("Failed to setup cpu: {message}");
             return None;
         }
     };
@@ -414,7 +435,10 @@ fn cpal_thread<T: Sample + FromSample<f32>>(
 
 impl rboy::AudioPlayer for CpalPlayer {
     fn play(&mut self, buf_left: &[f32], buf_right: &[f32]) {
-        debug_assert!(buf_left.len() == buf_right.len());
+        debug_assert!(
+            buf_left.len() == buf_right.len(),
+            "Audio buffers must have the same length"
+        );
 
         let mut buffer = self.buffer.lock().unwrap();
 
@@ -483,4 +507,47 @@ fn run_input_listener(
 
 fn gpio(pin: u8, active_low: bool) -> RaspberryGpio {
     RaspberryGpio::try_new(pin, active_low).expect("Could not connect to GPIO")
+}
+
+fn log_config(config: &AppConfig) {
+    info!("Configuration:");
+    info!("  Rom Path: {}", config.roms_directory.display());
+    info!(
+        "  Default debounce: {}",
+        config.default_debounce().as_millis()
+    );
+    info!("  Default active_low: {}", config.default_active_low);
+    info!("  Poll interval: {}", config.poll_interval().as_millis());
+    info!("  Keys:");
+    for key in &config.keys {
+        info!("    GPIO: {}", key.gpio);
+        info!("    Keycode: {}", key.keycode);
+        if let Some(debounce) = key.debounce() {
+            info!("    Debounce (ms): {}", debounce.as_millis());
+        }
+        info!("    Active Low: {:?}", key.active_low);
+        info!("    Repeat: {}", key.repeat);
+        if let Some(delay) = key.repeat_delay() {
+            info!("    Repeat Delay (ms): {}", delay.as_millis());
+        }
+        if let Some(rate) = key.repeat_rate() {
+            info!("    Repeat Rate (ms): {}", rate.as_millis());
+        }
+    }
+    info!("  Power Switches:");
+    for ps in &config.power_switches {
+        info!("    GPIO {}", ps.gpio);
+        info!(
+            "    Active Low: {}",
+            ps.active_low.unwrap_or(config.default_active_low)
+        );
+    }
+}
+
+/// Initialize application logging with the specified log level
+fn init_app_log(level: args::LogLevel) -> anyhow::Result<()> {
+    env_logger::Builder::new()
+        .filter_level(level.into())
+        .try_init()
+        .map_err(|e| anyhow::anyhow!("Failed to initialize logger: {}", e))
 }
