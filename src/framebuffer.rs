@@ -58,20 +58,18 @@ impl Framebuffer {
         let scaled_h = crate::SCREEN_H * self.scale;
         let y_offset: isize = (self.height as isize - scaled_h as isize) / 2;
 
+        debug!(
+            "Writing framebuffer: y_offset = {}, scaled_h = {}",
+            y_offset, scaled_h
+        );
+
         for sy in 0..crate::SCREEN_H {
-            let dy0 = sy * self.scale;
-            let dy1 = dy0 + 1;
+            let dy_base = (sy * self.scale) as isize + y_offset;
 
-            let dst_y0 = dy0 as isize + y_offset;
-            let dst_y1 = dy1 as isize + y_offset;
-
-            // do not draw outside of framebuffer
-            if dst_y1 < 0 || dst_y0 >= self.height as isize {
+            // Out of bounds vertical
+            if dy_base + (self.scale as isize) <= 0 || dy_base >= self.height as isize {
                 continue;
             }
-
-            let dst_y0 = dst_y0 as usize;
-            let dst_y1 = dst_y1 as usize;
 
             for sx in 0..crate::SCREEN_W {
                 let i = (sy * crate::SCREEN_W + sx) * 3;
@@ -80,21 +78,25 @@ impl Framebuffer {
                 let g = buf[i + 1];
                 let b = buf[i + 2];
 
-                // RGB888 to RGB565
                 let rgb565: u16 =
                     ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3);
 
-                let dx0 = sx * self.scale;
-                let dx1 = dx0 + 1;
+                let dx_base = sx * self.scale;
 
-                unsafe {
-                    let row0 = self.ptr.add(dst_y0 * self.stride);
-                    let row1 = self.ptr.add(dst_y1 * self.stride);
+                // Draw a scale×scale block
+                for py in 0..self.scale {
+                    let dy = dy_base + py as isize;
+                    if dy < 0 || dy >= self.height as isize {
+                        continue;
+                    }
 
-                    *row0.wrapping_add(dx0) = rgb565;
-                    *row0.wrapping_add(dx1) = rgb565;
-                    *row1.wrapping_add(dx0) = rgb565;
-                    *row1.wrapping_add(dx1) = rgb565;
+                    unsafe {
+                        let row = self.ptr.add(dy as usize * self.stride);
+
+                        for px in 0..self.scale {
+                            *row.add(dx_base + px) = rgb565;
+                        }
+                    }
                 }
             }
         }
