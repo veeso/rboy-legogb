@@ -1,6 +1,7 @@
-use crate::mbc::MBC;
-use crate::StrResult;
 use serde::{Deserialize, Serialize};
+
+use crate::StrResult;
+use crate::mbc::MBC;
 
 #[derive(Serialize, Deserialize)]
 pub struct MBC0 {

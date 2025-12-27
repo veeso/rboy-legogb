@@ -1,13 +1,13 @@
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
 use crate::cpu::CPU;
 use crate::gbmode::GbMode;
 use crate::keypad::KeypadKey;
-use crate::mbc;
 use crate::printer::GbPrinter;
-use crate::serial;
 use crate::serial::SerialCallback;
-use crate::sound;
-use crate::StrResult;
-use serde::{Deserialize, Serialize};
+use crate::{StrResult, mbc, serial, sound};
 
 #[derive(Serialize, Deserialize)]
 pub struct Device {
@@ -48,11 +48,11 @@ impl Device {
     }
 
     pub fn new(
-        romname: &str,
+        romname: &Path,
         skip_checksum: bool,
         save_state: Option<String>,
     ) -> StrResult<Device> {
-        let cart = mbc::FileBackedMBC::new(romname.into(), skip_checksum)?;
+        let cart = mbc::FileBackedMBC::new(romname.to_path_buf(), skip_checksum)?;
         CPU::new(Box::new(cart), None).map(|cpu| Device {
             cpu: cpu,
             save_state,
@@ -60,11 +60,11 @@ impl Device {
     }
 
     pub fn new_cgb(
-        romname: &str,
+        romname: &Path,
         skip_checksum: bool,
         save_state: Option<String>,
     ) -> StrResult<Device> {
-        let cart = mbc::FileBackedMBC::new(romname.into(), skip_checksum)?;
+        let cart = mbc::FileBackedMBC::new(romname.to_path_buf(), skip_checksum)?;
         CPU::new_cgb(Box::new(cart), None).map(|cpu| Device {
             cpu: cpu,
             save_state,

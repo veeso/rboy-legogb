@@ -1,238 +1,131 @@
-#![crate_name = "rboy"]
+mod app_config;
+mod args;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, Sample};
-use rboy::device::Device;
-use rboy::framebuffer::{Framebuffer, FramebufferConfig};
-use rboy::input::gpio::RaspberryGpio;
-use rboy::input::pinout::PinoutConfig;
-use rboy::input::{InputListener, InputListenerConfig, KeyConfig, KeyEvent, PowerSwitch};
-use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 
-const EXITCODE_SUCCESS: i32 = 0;
-const EXITCODE_CPU_LOAD_FAILS: i32 = 2;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{FromSample, Sample};
+use rboy::device::Device;
+use rboy::framebuffer::{Framebuffer, FramebufferConfig};
+use rboy::input::gpio::RaspberryGpio;
+use rboy::input::{InputListener, InputListenerConfig, KeyConfig, KeyEvent, PowerSwitch};
+
+use self::app_config::AppConfig;
 
 enum GBEvent {
     KeyUp(rboy::KeypadKey),
     KeyDown(rboy::KeypadKey),
 }
 
-fn main() {
-    let exit_status = real_main();
-    if exit_status != EXITCODE_SUCCESS {
-        std::process::exit(exit_status);
-    }
+/// The Application state.
+#[derive(Debug, Clone)]
+enum AppState {
+    Emulator {
+        config: Rc<AppConfig>,
+        rom_file: PathBuf,
+    },
+    Menu {
+        config: Rc<AppConfig>,
+    },
+    Exit,
 }
 
-fn real_main() -> i32 {
-    let matches = clap::Command::new("rboy")
-        .version("0.1")
-        .author("Mathijs van de Nes")
-        .about("A Gameboy Colour emulator written in Rust")
-        .arg(
-            clap::Arg::new("filename")
-                .help("Sets the ROM file to load")
-                .required(true),
-        )
-        .arg(
-            clap::Arg::new("serial")
-                .help("Prints the data from the serial port to stdout")
-                .short('s')
-                .long("serial")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            clap::Arg::new("printer")
-                .help("Emulates a gameboy printer")
-                .short('p')
-                .long("printer")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            clap::Arg::new("classic")
-                .help("Forces the emulator to run in classic Gameboy mode")
-                .short('c')
-                .long("classic")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            clap::Arg::new("scale")
-                .help("Sets the scale of the emulator window")
-                .long("scale")
-                .default_value("2"),
-        )
-        .arg(
-            clap::Arg::new("width")
-                .help("Sets the width of the emulator")
-                .long("width"),
-        )
-        .arg(
-            clap::Arg::new("height")
-                .help("Sets the height of the emulator")
-                .long("height"),
-        )
-        .arg(
-            clap::Arg::new("stride-pixels")
-                .help("Sets the stride (in pixels) of the framebuffer")
-                .long("stride-pixels"),
-        )
-        .arg(
-            clap::Arg::new("bytes-per-pixel")
-                .help("Sets the bytes per pixel of the framebuffer")
-                .long("bytes-per-pixel"),
-        )
-        .arg(
-            clap::Arg::new("audio")
-                .help("Enables audio")
-                .short('a')
-                .long("audio")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            clap::Arg::new("skip-checksum")
-                .help("Skips verification of the cartridge checksum")
-                .long("skip-checksum")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            clap::Arg::new("test-mode")
-                .help("Starts the emulator in a special test mode")
-                .long("test-mode")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            clap::Arg::new("state-path")
-                .help("Starts the emulator from a saved state file at the specified path")
-                .long("load-state"),
-        )
-        .arg(
-            clap::Arg::new("framebuffer")
-                .help("Specify the path to the framebuffer output file")
-                .long("framebuffer")
-                .default_value("/dev/fb0"),
-        )
-        .arg(
-            clap::Arg::new("pinout")
-                .help("Specify the path to the GPIO pinout configuration file")
-                .long("pinout")
-                .default_value("pinout.toml"),
-        )
-        .get_matches();
+fn main() -> anyhow::Result<()> {
+    let args: args::Args = argh::from_env();
 
-    let test_mode = matches.get_one::<bool>("test-mode").copied().unwrap();
-    let opt_reload: Option<String> = matches
-        .get_one::<String>("state-path")
-        .map(|s| s.to_string());
-    let opt_serial = matches.get_one::<bool>("serial").copied().unwrap();
-    let opt_printer = matches.get_one::<bool>("printer").copied().unwrap();
-    let opt_classic = matches.get_one::<bool>("classic").copied().unwrap();
-    let opt_audio = matches.get_one::<bool>("audio").copied().unwrap();
-    let opt_skip_checksum = matches.get_one::<bool>("skip-checksum").copied().unwrap();
-    let filename = matches.get_one::<String>("filename").unwrap();
+    // read config
+    let config = Rc::new(AppConfig::load_from_file(&args.config)?);
 
-    if test_mode {
-        return run_test_mode(filename, opt_classic, opt_skip_checksum);
+    // open framebuffer
+    let framebuffer = Rc::new(Framebuffer::new(FramebufferConfig {
+        path: args.framebuffer_path,
+        width: args.width,
+        height: args.height,
+        bytes_per_pixel: args.bytes_per_pixel,
+        stride_pixels: args.stride_pixels,
+        scale: args.scale,
+    })?);
+
+    // init state
+    let mut app_state = match &args.rom_path {
+        Some(rom_path) => AppState::Emulator {
+            config: config.clone(),
+            rom_file: rom_path.clone(),
+        },
+        None => AppState::Menu {
+            config: config.clone(),
+        },
+    };
+
+    // setup control c handler
+    let exit = Arc::new(AtomicBool::new(false));
+    {
+        let exit = exit.clone();
+        ctrlc::set_handler(move || {
+            exit.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+        .expect("Error setting Ctrl-C handler");
     }
 
-    let mut is_new_start = true;
-    let cpu = opt_reload
-        .as_ref()
-        .filter(|path| std::path::Path::new(path).exists())
-        .and_then(|path| {
-            is_new_start = false;
-            Device::load_state(path)
-        })
-        .or_else(|| construct_cpu(filename, opt_classic, opt_skip_checksum, opt_reload.clone()));
+    // loop through state machine
+
+    loop {
+        app_state = match app_state {
+            AppState::Emulator { config, rom_file } => {
+                run_emulator(&rom_file, config, framebuffer.clone())?
+            }
+            AppState::Menu { config } => {
+                todo!();
+            }
+            AppState::Exit => break,
+        };
+    }
+
+    Ok(())
+}
+
+fn run_emulator(
+    rom_file: &Path,
+    config: Rc<AppConfig>,
+    framebuffer: Rc<Framebuffer>,
+) -> anyhow::Result<AppState> {
+    // zero framebuffer
+    framebuffer.zero();
+
+    let cpu = construct_cpu(rom_file, false, false, None);
 
     let Some(mut cpu) = cpu else {
-        return EXITCODE_CPU_LOAD_FAILS;
+        return Err(anyhow::anyhow!("Could not construct CPU"));
     };
 
-    if opt_printer {
-        cpu.attach_printer();
-    } else {
-        cpu.set_stdout(opt_serial);
-    }
+    let cpal_audio_stream;
 
-    let mut cpal_audio_stream = None;
-    if opt_audio {
-        let player = CpalPlayer::get();
-        match player {
-            Some((v, s)) => {
-                cpu.enable_audio(Box::new(v) as Box<dyn rboy::AudioPlayer>, !is_new_start);
-                cpal_audio_stream = Some(s);
-            }
-            None => {
-                warn("Could not open audio device");
-                return EXITCODE_CPU_LOAD_FAILS;
-            }
+    let player = CpalPlayer::get();
+    match player {
+        Some((v, s)) => {
+            cpu.enable_audio(Box::new(v) as Box<dyn rboy::AudioPlayer>, false);
+            cpal_audio_stream = Some(s);
+        }
+        None => {
+            anyhow::bail!("Could not initialize audio device");
         }
     }
-
-    let width = matches
-        .get_one::<String>("width")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(160);
-    let height = matches
-        .get_one::<String>("height")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(144);
-    let stride_pixels = matches
-        .get_one::<String>("stride-pixels")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(160);
-    let bytes_per_pixel = matches
-        .get_one::<String>("bytes-per-pixel")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(2);
-    let scale = matches
-        .get_one::<String>("scale")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(2);
-
-    let framebuffer_path = std::path::Path::new(
-        matches
-            .get_one::<String>("framebuffer")
-            .expect("Framebuffer path missing"),
-    );
-
-    let fb_config = FramebufferConfig {
-        path: framebuffer_path.to_path_buf(),
-        width,
-        height,
-        scale,
-        stride_pixels,
-        bytes_per_pixel,
-    };
-    let mut framebuffer = Framebuffer::new(fb_config).expect("Could not open framebuffer");
-
     let (gb_event_sender, gb_event_receiver) = mpsc::channel();
     let (video_sender, video_receiver) = mpsc::sync_channel(1);
 
     let cpu_thread = thread::spawn(move || run_cpu(cpu, video_sender, gb_event_receiver));
 
-    let pinout_config_path = matches
-        .get_one::<String>("pinout")
-        .expect("Pinout path missing");
-    let pinout_config_path = std::path::Path::new(pinout_config_path);
-    let pinout_config = match PinoutConfig::load_from_file(pinout_config_path) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            warn(&format!("Could not load pinout configuration: {}", e));
-            return EXITCODE_CPU_LOAD_FAILS;
-        }
-    };
-
     // run input listener
     let exit_flag = Arc::new(AtomicBool::new(false));
     let (keyboard_event_sender, keyboard_event_receiver) = mpsc::channel();
     let input_listener_thread =
-        run_input_listener(pinout_config, exit_flag.clone(), keyboard_event_sender);
+        run_input_listener(&config, exit_flag.clone(), keyboard_event_sender);
 
     loop {
         if exit_flag.load(std::sync::atomic::Ordering::SeqCst) {
@@ -252,10 +145,7 @@ fn real_main() -> i32 {
 
         match video_receiver.try_recv() {
             Ok(data) => {
-                if let Err(err) = framebuffer.write(&data) {
-                    warn(&format!("Could not write to framebuffer: {err}"));
-                    break;
-                }
+                framebuffer.write(&data);
             }
             Err(TryRecvError::Empty) => {
                 thread::sleep(std::time::Duration::from_millis(10));
@@ -264,15 +154,20 @@ fn real_main() -> i32 {
         }
     }
 
-    // join
-    exit_flag.store(true, std::sync::atomic::Ordering::SeqCst);
     let _ = input_listener_thread.join();
 
     drop(cpal_audio_stream);
     drop(video_receiver); // Stop CPU thread by disconnecting
     let _ = cpu_thread.join();
 
-    EXITCODE_SUCCESS
+    // zero framebuffer
+    framebuffer.zero();
+
+    if exit_flag.load(std::sync::atomic::Ordering::SeqCst) {
+        Ok(AppState::Exit)
+    } else {
+        Ok(AppState::Menu { config })
+    }
 }
 
 fn warn(message: &str) {
@@ -280,14 +175,14 @@ fn warn(message: &str) {
 }
 
 fn construct_cpu(
-    filename: &str,
+    rom_file: &Path,
     classic_mode: bool,
     skip_checksum: bool,
     reload_mode: Option<String>,
 ) -> Option<Box<Device>> {
     let opt_c = match classic_mode {
-        true => Device::new(filename, skip_checksum, reload_mode),
-        false => Device::new_cgb(filename, skip_checksum, reload_mode),
+        true => Device::new(rom_file, skip_checksum, reload_mode),
+        false => Device::new_cgb(rom_file, skip_checksum, reload_mode),
     };
     let c = match opt_c {
         Ok(cpu) => cpu,
@@ -336,10 +231,12 @@ fn run_cpu(mut cpu: Box<Device>, sender: SyncSender<Vec<u8>>, receiver: Receiver
 
 fn timer_periodic(ms: u64) -> Receiver<()> {
     let (tx, rx) = mpsc::sync_channel(1);
-    thread::spawn(move || loop {
-        thread::sleep(std::time::Duration::from_millis(ms));
-        if tx.send(()).is_err() {
-            break;
+    thread::spawn(move || {
+        loop {
+            thread::sleep(std::time::Duration::from_millis(ms));
+            if tx.send(()).is_err() {
+                break;
+            }
         }
     });
     rx
@@ -527,85 +424,8 @@ impl rboy::AudioPlayer for CpalPlayer {
     }
 }
 
-struct NullAudioPlayer {}
-
-impl rboy::AudioPlayer for NullAudioPlayer {
-    fn play(&mut self, _buf_left: &[f32], _buf_right: &[f32]) {
-        // Do nothing
-    }
-
-    fn samples_rate(&self) -> u32 {
-        44100
-    }
-
-    fn underflowed(&self) -> bool {
-        false
-    }
-}
-
-fn run_test_mode(filename: &str, classic_mode: bool, skip_checksum: bool) -> i32 {
-    let opt_cpu = match classic_mode {
-        true => Device::new(filename, skip_checksum, None),
-        false => Device::new_cgb(filename, skip_checksum, None),
-    };
-    let mut cpu = match opt_cpu {
-        Err(errmsg) => {
-            warn(errmsg);
-            return EXITCODE_CPU_LOAD_FAILS;
-        }
-        Ok(cpu) => cpu,
-    };
-
-    cpu.set_stdout(true);
-    cpu.enable_audio(Box::new(NullAudioPlayer {}), false);
-
-    // from masonforest, https://stackoverflow.com/a/55201400 (CC BY-SA 4.0)
-    let stdin_channel = spawn_stdin_channel();
-    loop {
-        match stdin_channel.try_recv() {
-            Ok(stdin_byte) => match stdin_byte {
-                b'q' => break,
-                b's' => {
-                    let data = cpu.get_gpu_data().to_vec();
-                    print_screenshot(data);
-                }
-                v => {
-                    eprintln!("MSG:Unknown stdinvalue {}", v);
-                }
-            },
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => break,
-        }
-        for _ in 0..1000 {
-            cpu.do_cycle();
-        }
-    }
-    EXITCODE_SUCCESS
-}
-
-fn spawn_stdin_channel() -> Receiver<u8> {
-    let (tx, rx) = mpsc::channel::<u8>();
-    thread::spawn(move || loop {
-        let mut buffer = [0];
-        match io::stdin().read(&mut buffer) {
-            Ok(1) => tx.send(buffer[0]).unwrap(),
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            _ => break,
-        };
-    });
-    rx
-}
-
-fn print_screenshot(data: Vec<u8>) {
-    eprint!("SCREENSHOT:");
-    for b in data {
-        eprint!("{:02x}", b);
-    }
-    eprintln!();
-}
-
 fn run_input_listener(
-    config: PinoutConfig,
+    config: &AppConfig,
     exit: Arc<AtomicBool>,
     event_sender: Sender<rboy::input::Event>,
 ) -> JoinHandle<()> {

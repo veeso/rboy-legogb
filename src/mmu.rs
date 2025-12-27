@@ -1,12 +1,12 @@
+use serde::{Deserialize, Serialize};
+
 use crate::gbmode::{GbMode, GbSpeed};
 use crate::gpu::GPU;
 use crate::keypad::Keypad;
-use crate::mbc;
 use crate::serial::{Serial, SerialCallback};
 use crate::sound::Sound;
 use crate::timer::Timer;
-use crate::StrResult;
-use serde::{Deserialize, Serialize};
+use crate::{StrResult, mbc};
 
 const WRAM_SIZE: usize = 0x8000;
 const ZRAM_SIZE: usize = 0x7F;

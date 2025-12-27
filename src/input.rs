@@ -1,17 +1,16 @@
 pub mod config;
 pub mod gpio;
-pub mod pinout;
 pub mod state;
+
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::Sender;
+use std::time::Duration;
 
 pub use self::config::{InputListenerConfig, KeyConfig, PowerSwitch, RepeatConfig};
 use self::gpio::{Gpio, GpioValue};
-use self::state::KeyState;
-use self::state::OutEvent;
+use self::state::{KeyState, OutEvent};
 use crate::KeypadKey;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::Sender;
-use std::sync::Arc;
-use std::time::Duration;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum KeyEvent {

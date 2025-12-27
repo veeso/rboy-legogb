@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::KeypadKey;
+use rboy::KeypadKey;
 
 /// Wrapper around [`KeypadKey`] to facilitate deserialization
 #[derive(Debug, Clone, Copy)]

@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
@@ -54,10 +53,8 @@ impl Framebuffer {
             stride: config.stride_pixels,
         })
     }
-}
 
-impl Write for Framebuffer {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    pub fn write(&self, buf: &[u8]) {
         let crop_top = (crate::SCREEN_H * self.scale - self.height) / self.scale;
 
         for sy in 0..crate::SCREEN_H {
@@ -95,11 +92,13 @@ impl Write for Framebuffer {
                 }
             }
         }
-
-        Ok(buf.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+    /// Fills the entire framebuffer with zeros.
+    pub fn zero(&self) {
+        let size = self.stride * self.height * 2;
+        unsafe {
+            std::ptr::write_bytes(self.ptr, 0, size);
+        }
     }
 }

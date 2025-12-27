@@ -1,37 +1,38 @@
 [package]
 name = "rboy"
 version = "0.2.0"
-authors = ["mvdnes <git@mathijs.vd-nes.nl>"]
-edition = "2018"
+authors = [
+  "mvdnes <git@mathijs.vd-nes.nl>",
+  "Christian Visintin <christian.visintin@veeso.dev>",
+]
+edition = "2024"
 
 [dependencies]
 anyhow = "1"
+argh = "0.1"
 blip_buf = ">=0.1.3"
-serde = { version = "1.0", features = ["derive"] }
-clap = { version = "4", optional = true }
-cpal = { version = "0.15", optional = true }
-libc = { version = "0.2", optional = true }
-log = "0.4"
-mmap = { version = "0.1", optional = true }
-gpio-cdev = "0.6"
-rppal = "0.22"
-serde_arrays = "0.2.0"
-typetag = "0.2.20"
 ciborium = "0.2.2"
-toml = "0.5"
+cpal = { version = "0.15" }
+ctrlc = "3"
+gpio-cdev = "0.6"
+libc = { version = "0.2" }
+log = "0.4"
+mmap = { version = "0.1" }
+rppal = "0.22"
+serde = { version = "1.0", features = ["derive"] }
+serde_arrays = "0.2.0"
+toml = "0.9"
+typetag = "0.2.20"
 
 [dev-dependencies]
 tempfile = "3"
 
-[features]
-default = ["gui"]
-gui = ["clap", "cpal", "libc", "mmap"]
 
 [[bin]]
-name = "rboy"
+name = "rboy-legogb"
+path = "src/main.rs"
 test = false
 doc = false
-required-features = ["gui"]
 
 [profile.release]
 lto = true

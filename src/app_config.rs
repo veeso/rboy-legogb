@@ -9,7 +9,7 @@ pub use self::keycode::Keycode;
 
 /// Pinout configuration structure
 #[derive(Debug, Clone, Deserialize)]
-pub struct PinoutConfig {
+pub struct AppConfig {
     /// default debounce time in milliseconds
     default_debounce_ms: u64,
     /// default active_low setting for keys; if true, key is active when GPIO is low
@@ -24,12 +24,12 @@ pub struct PinoutConfig {
     pub power_switches: Vec<PowerSwitchConfig>,
 }
 
-impl PinoutConfig {
+impl AppConfig {
     /// Load configuration from the specified file path
     pub fn load_from_file(path: &Path) -> anyhow::Result<Self> {
         let config_str = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read config file {:?}: {}", path, e))?;
-        let config: PinoutConfig = toml::from_str(&config_str)
+        let config: AppConfig = toml::from_str(&config_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse config file {:?}: {}", path, e))?;
         Ok(config)
     }
@@ -90,15 +90,14 @@ pub struct PowerSwitchConfig {
 #[cfg(test)]
 mod tests {
 
+    use rboy::KeypadKey;
     use tempfile::NamedTempFile;
-
-    use crate::KeypadKey;
 
     use super::*;
 
     #[test]
     fn test_should_parse_config() {
-        let config: PinoutConfig = toml::from_str(DEFAULT_CONFIG).unwrap();
+        let config: AppConfig = toml::from_str(DEFAULT_CONFIG).unwrap();
 
         assert_eq!(config.default_debounce_ms, 20);
         assert_eq!(config.default_active_low, true);
@@ -127,14 +126,14 @@ mod tests {
         let tempfile = NamedTempFile::new().unwrap();
         std::fs::write(tempfile.path(), DEFAULT_CONFIG).unwrap();
 
-        let config = PinoutConfig::load_from_file(tempfile.path()).unwrap();
+        let config = AppConfig::load_from_file(tempfile.path()).unwrap();
         assert_eq!(config.keys.len(), 2);
         assert_eq!(config.power_switches.len(), 1);
     }
 
     #[test]
     fn test_should_parse_config_without_arrays() {
-        let _config: PinoutConfig = toml::from_str(CONFIG_WNO_ARRAYS).unwrap();
+        let _config: AppConfig = toml::from_str(CONFIG_WNO_ARRAYS).unwrap();
     }
 
     const DEFAULT_CONFIG: &str = r#"

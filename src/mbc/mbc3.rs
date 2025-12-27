@@ -1,10 +1,11 @@
-use crate::mbc::{ram_banks, MBC};
-use crate::StrResult;
-
-use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 use std::io::prelude::*;
 use std::time;
+
+use serde::{Deserialize, Serialize};
+
+use crate::StrResult;
+use crate::mbc::{MBC, ram_banks};
 
 #[derive(Serialize, Deserialize)]
 pub struct MBC3 {

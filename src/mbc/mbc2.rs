@@ -1,6 +1,7 @@
-use crate::mbc::{rom_banks, MBC};
-use crate::StrResult;
 use serde::{Deserialize, Serialize};
+
+use crate::StrResult;
+use crate::mbc::{MBC, rom_banks};
 
 #[derive(Serialize, Deserialize)]
 pub struct MBC2 {

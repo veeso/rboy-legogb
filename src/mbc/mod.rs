@@ -1,9 +1,10 @@
-use crate::StrResult;
-use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::io;
 use std::io::prelude::*;
-use std::path;
+use std::{io, path};
+
+use serde::{Deserialize, Serialize};
+
+use crate::StrResult;
 
 mod mbc0;
 mod mbc1;
@@ -165,11 +166,7 @@ fn ram_banks(v: u8) -> usize {
 }
 
 fn rom_banks(v: u8) -> usize {
-    if v <= 8 {
-        2 << v
-    } else {
-        0
-    }
+    if v <= 8 { 2 << v } else { 0 }
 }
 
 fn check_checksum(data: &[u8]) -> StrResult<()> {

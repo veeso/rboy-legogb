@@ -1,6 +1,8 @@
-use crate::gbmode::GbMode;
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+
+use serde::{Deserialize, Serialize};
+
+use crate::gbmode::GbMode;
 
 const VRAM_SIZE: usize = 0x4000;
 const VOAM_SIZE: usize = 0xA0;

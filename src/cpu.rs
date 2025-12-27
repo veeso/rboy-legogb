@@ -1,10 +1,10 @@
-use crate::mbc;
+use serde::{Deserialize, Serialize};
+
 use crate::mmu::MMU;
 use crate::register::CpuFlag::{C, H, N, Z};
 use crate::register::Registers;
 use crate::serial::SerialCallback;
-use crate::StrResult;
-use serde::{Deserialize, Serialize};
+use crate::{StrResult, mbc};
 
 #[derive(Serialize, Deserialize)]
 pub struct CPU {
@@ -2551,10 +2551,12 @@ impl CPU {
 
 #[cfg(test)]
 mod test {
+    use std::sync::{Arc, Mutex};
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
     use super::CPU;
     use crate::mbc;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::{Arc, Mutex};
 
     const CPUINSTRS: &'static str = "roms/cpu_instrs.gb";
     const CPU_SERIAL: &'static [u8] = b"cpu_instrs\n\n01:ok  02:ok  03:ok  04:ok  05:ok  06:ok  07:ok  08:ok  09:ok  10:ok  11:ok  \n\nPassed all tests\n";

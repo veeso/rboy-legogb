@@ -1,5 +1,6 @@
-use crate::serial::SerialCallback;
 use serde::{Deserialize, Serialize};
+
+use crate::serial::SerialCallback;
 
 #[derive(Serialize, Deserialize)]
 pub struct GbPrinter {
