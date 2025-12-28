@@ -101,6 +101,11 @@ impl AppMenu {
                 return Ok(AppState::Exit);
             }
 
+            if redraw {
+                self.redraw(selected);
+                redraw = false;
+            }
+
             // read input
             let (event, key) = match self.event_receiver.try_recv() {
                 Ok(event) => event,
@@ -138,15 +143,11 @@ impl AppMenu {
                 }
                 _ => continue,
             }
-
-            if redraw {
-                self.redraw(selected);
-                redraw = false;
-            }
         }
     }
 
     fn redraw(&self, selected: usize) {
+        debug!("Redraw menu");
         // zero
         self.framebuffer.zero();
 
@@ -182,6 +183,7 @@ impl AppMenu {
 
     /// Draw text
     fn draw_text(&self, text: &str, mut x: usize, y: &mut usize, invert: bool) {
+        debug!("Drawing text '{text}' at ({x}, {y}); invert: {invert}");
         for glyph in text.chars() {
             self.draw_char(x, *y, glyph, invert);
             x += SPACE_SIZE;
@@ -193,6 +195,7 @@ impl AppMenu {
     /// draw a character in the framebuffer
     fn draw_char(&self, x: usize, y: usize, c: char, invert: bool) {
         let glyph = BASIC_FONTS.get(c).unwrap_or([0u8; 8]);
+        debug!("Glyph for {c} ({x}, {y}): {glyph:?}");
 
         for (row, bits) in glyph.iter().enumerate() {
             for col in 0..8 {
