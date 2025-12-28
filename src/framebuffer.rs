@@ -53,6 +53,10 @@ impl Framebuffer {
         })
     }
 
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
     pub fn height(&self) -> usize {
         self.height
     }
@@ -105,6 +109,23 @@ impl Framebuffer {
         let pixels = self.stride * self.height;
         unsafe {
             std::ptr::write_bytes(self.ptr, 0, pixels);
+        }
+    }
+
+    /// Fills the entire framebuffer with zeros.
+    pub fn fill(&self, red: u8, green: u8, blue: u8) {
+        let rgb565: u16 =
+            ((red as u16 >> 3) << 11) | ((green as u16 >> 2) << 5) | (blue as u16 >> 3);
+
+        // fill
+        for y in 0..self.height {
+            unsafe {
+                let row = self.ptr.add(y * self.stride);
+
+                for x in 0..self.width {
+                    *row.add(x) = rgb565;
+                }
+            }
         }
     }
 
