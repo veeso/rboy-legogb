@@ -1,41 +1,31 @@
-mod games_list;
-mod gpio_port;
-
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::Receiver;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
-use tuirealm::listener::SyncPort;
-use tuirealm::ratatui::layout::{Constraint, Layout};
-use tuirealm::terminal::{CrosstermTerminalAdapter, TerminalBridge};
-use tuirealm::{Application, EventListenerCfg, NoUserEvent, PollStrategy};
+use font8x8::{BASIC_FONTS, UnicodeFonts};
+use rboy::KeypadKey;
+use rboy::framebuffer::Framebuffer;
+use rboy::input::KeyEvent;
 
 use crate::AppState;
 use crate::app_config::AppConfig;
-use crate::menu::games_list::GamesList;
-use crate::menu::gpio_port::GpioPort;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ComponentId {
-    GamesList,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Msg {
-    None,
-    Exit,
-    SelectGame(usize),
-}
+const LINE_H: usize = 16;
+const PADDING_Y: usize = 16;
+const PADDING_X: usize = 16;
+const SPACE_SIZE: usize = 8;
+const TITLE: &str = "RBoy-lego - Press start to play a game";
+const NO_GAMES: &str = "You have no games in your ROMs directory";
 
 pub struct AppMenu {
-    app: Application<ComponentId, Msg, NoUserEvent>,
     config: Rc<AppConfig>,
+    framebuffer: Rc<Framebuffer>,
+    event_receiver: Receiver<rboy::input::Event>,
     exit: Arc<AtomicBool>,
     games: Vec<GameEntry>,
-    terminal_bridge: TerminalBridge<CrosstermTerminalAdapter>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +44,7 @@ struct GameEntry {
 impl AppMenu {
     pub fn new(
         config: Rc<AppConfig>,
+        framebuffer: Rc<Framebuffer>,
         exit: Arc<AtomicBool>,
         event_receiver: Receiver<rboy::input::Event>,
     ) -> anyhow::Result<Self> {
@@ -92,98 +83,124 @@ impl AppMenu {
             }
         }
 
-        let mut terminal_bridge = TerminalBridge::init_crossterm()?;
-        let _ = terminal_bridge.disable_mouse_capture();
-        let gpio_port = GpioPort::new(event_receiver);
-        let gpio_port = SyncPort::new(Box::new(gpio_port), config.poll_interval(), 1);
-        let app = Application::init(
-            EventListenerCfg::default()
-                .crossterm_input_listener(Duration::from_millis(100), 1)
-                .port(gpio_port),
-        );
-
         Ok(Self {
-            app,
             config,
+            event_receiver,
             exit,
+            framebuffer,
             games,
-            terminal_bridge,
         })
     }
 
-    pub fn run(mut self) -> anyhow::Result<AppState> {
+    pub fn run(self) -> anyhow::Result<AppState> {
         let mut redraw = true;
-        self.init_ui();
+        let mut selected = 0;
 
         loop {
-            if self.exit.load(std::sync::atomic::Ordering::Relaxed) {
+            if self.exit.load(Ordering::Relaxed) {
                 return Ok(AppState::Exit);
             }
 
-            match self.app.tick(PollStrategy::Once) {
-                Ok(messages) if messages.is_empty() => {}
-                Ok(messages) => {
+            // read input
+            let (event, key) = match self.event_receiver.try_recv() {
+                Ok(event) => event,
+                Err(TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.exit.store(true, Ordering::Relaxed);
+                    error!("Main thread disconnected");
+                    return Ok(AppState::Exit);
+                }
+            };
+
+            match (event, key) {
+                (KeyEvent::Down, KeypadKey::Start) => {
+                    let Some(path) = self.games.get(selected).map(|g| g.path.clone()) else {
+                        error!("No such game at {selected}");
+                        continue;
+                    };
+                    return Ok(AppState::Emulator {
+                        rom_file: path,
+                        config: self.config,
+                    });
+                }
+                (KeyEvent::Down, KeypadKey::Down) => {
+                    selected = selected.saturating_sub(1);
                     redraw = true;
-                    for msg in messages {
-                        match msg {
-                            Msg::Exit => {
-                                self.stop()?;
-                                return Ok(AppState::Exit);
-                            }
-                            Msg::SelectGame(index) => {
-                                let Some(path) = self.games.get(index).map(|g| g.path.clone())
-                                else {
-                                    continue;
-                                };
-                                self.stop()?;
-                                return Ok(AppState::Emulator {
-                                    rom_file: path,
-                                    config: self.config,
-                                });
-                            }
-                            Msg::None => {}
-                        }
+                }
+                (KeyEvent::Down, KeypadKey::Up) => {
+                    if selected + 1 < self.games.len() {
+                        selected = selected.saturating_add(1);
+                        redraw = true;
                     }
                 }
-                Err(e) => {
-                    error!("Error in TUI application: {}", e);
-                }
+                _ => continue,
             }
 
             if redraw {
-                self.redraw();
+                self.redraw(selected);
                 redraw = false;
             }
         }
     }
 
-    fn stop(&mut self) -> anyhow::Result<()> {
-        self.terminal_bridge.restore()?;
-        Ok(())
+    fn redraw(&self, selected: usize) {
+        // zero
+        self.framebuffer.zero();
+
+        let max_visible = self.framebuffer.height() / 16;
+        let top = max_visible.saturating_sub(selected);
+
+        let mut y = PADDING_Y;
+
+        // write title first
+        self.draw_text(TITLE, PADDING_X, &mut y, false);
+
+        // write message if there are no games
+        if self.games.is_empty() {
+            self.draw_text(NO_GAMES, PADDING_X, &mut y, false);
+            return;
+        }
+
+        for (i, game) in self.games.iter().skip(top).take(max_visible).enumerate() {
+            let x = PADDING_X; // padding
+            let is_selected = top + i == selected;
+            let line = format!(
+                "{} {} - {}",
+                if is_selected { "> " } else { "  " },
+                game.name,
+                match game.platform {
+                    Platform::GameBoy => "GameBoy",
+                    Platform::GameBoyColor => "GameBoyColor",
+                }
+            );
+            self.draw_text(&line, x, &mut y, is_selected);
+        }
     }
 
-    fn init_ui(&mut self) {
-        assert!(
-            self.app
-                .mount(
-                    ComponentId::GamesList,
-                    Box::new(GamesList::new(&self.games)),
-                    vec![]
-                )
-                .is_ok()
-        );
-        assert!(self.app.active(&ComponentId::GamesList).is_ok());
+    /// Draw text
+    fn draw_text(&self, text: &str, mut x: usize, y: &mut usize, invert: bool) {
+        for glyph in text.chars() {
+            self.draw_char(x, *y, glyph, invert);
+            x += SPACE_SIZE;
+        }
+
+        *y += LINE_H;
     }
 
-    fn redraw(&mut self) {
-        let _ = self.terminal_bridge.raw_mut().draw(|f| {
-            let chunks = Layout::default()
-                .direction(tuirealm::ratatui::layout::Direction::Vertical)
-                .margin(1)
-                .constraints([Constraint::Percentage(100)])
-                .split(f.area());
+    /// draw a character in the framebuffer
+    fn draw_char(&self, x: usize, y: usize, c: char, invert: bool) {
+        let glyph = BASIC_FONTS.get(c).unwrap_or([0u8; 8]);
 
-            self.app.view(&ComponentId::GamesList, f, chunks[0]);
-        });
+        for (row, bits) in glyph.iter().enumerate() {
+            for col in 0..8 {
+                let mask = bits & (1 << col);
+                if (!invert && mask != 0) || (invert && mask == 0) {
+                    self.framebuffer.put_pixel(x + col, y + row, 0xffff);
+                }
+            }
+        }
     }
 }

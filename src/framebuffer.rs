@@ -53,6 +53,10 @@ impl Framebuffer {
         })
     }
 
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
     pub fn write(&self, buf: &[u8]) {
         let src_w = crate::SCREEN_W as f32;
         let src_h = crate::SCREEN_H as f32;
@@ -101,6 +105,17 @@ impl Framebuffer {
         let pixels = self.stride * self.height;
         unsafe {
             std::ptr::write_bytes(self.ptr, 0, pixels);
+        }
+    }
+
+    /// Write a single pixel of the framebuffer
+    pub fn put_pixel(&self, x: usize, y: usize, color: u16) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+
+        unsafe {
+            *self.ptr.add(y * self.stride + x) = color;
         }
     }
 }

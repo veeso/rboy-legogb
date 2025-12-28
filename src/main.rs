@@ -90,7 +90,7 @@ fn main() -> anyhow::Result<()> {
             AppState::Emulator { config, rom_file } => {
                 run_emulator(&rom_file, config, framebuffer.clone(), exit.clone())?
             }
-            AppState::Menu { config } => run_menu(config, exit.clone())?,
+            AppState::Menu { config } => run_menu(config, framebuffer.clone(), exit.clone())?,
             AppState::Exit => break,
         };
         debug!("New AppState: {app_state:?}",);
@@ -99,7 +99,11 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_menu(config: Rc<AppConfig>, exit: Arc<AtomicBool>) -> anyhow::Result<AppState> {
+fn run_menu(
+    config: Rc<AppConfig>,
+    framebuffer: Rc<Framebuffer>,
+    exit: Arc<AtomicBool>,
+) -> anyhow::Result<AppState> {
     // run input listener
     let (keyboard_event_sender, keyboard_event_receiver) = mpsc::channel();
 
@@ -107,8 +111,8 @@ fn run_menu(config: Rc<AppConfig>, exit: Arc<AtomicBool>) -> anyhow::Result<AppS
     let input_listener_thread =
         run_input_listener(&config, input_listener_exit.clone(), keyboard_event_sender);
 
-    // run tui
-    let res = menu::AppMenu::new(config, exit, keyboard_event_receiver)?.run();
+    // run menu
+    let res = menu::AppMenu::new(config, framebuffer, exit, keyboard_event_receiver)?.run();
     // stop input listener
     input_listener_exit.store(true, std::sync::atomic::Ordering::SeqCst);
     let _ = input_listener_thread.join();
